@@ -718,14 +718,14 @@ let S = null;
 try { const t = localStorage.getItem(KEY); if (t) S = JSON.parse(t); } catch (e) { S = null; }
 if (!S || S.v !== 7) S = buildDemo();
 const ROLES = [['monteur', 'Monteur', 'Consulte le planning'], ['apprenti', 'Apprenti', 'Consulte le planning'], ['interim', 'Intérimaire', 'Son planning et son RHI'], ['chefchantier', 'Chef de chantier', 'Modifie le planning + visa RHI'], ['planif', 'Planificateur', 'Planifie sans voir les heures'], ['cp', 'Chef de projet / RA', 'Vue complète'], ['admin', 'Administrateur', 'Vue complète + droits']];
-const PERMS = [['viewAll', 'Voir le planning de toutes les équipes', 'Sinon : uniquement sa propre ligne'], ['editPlan', 'Modifier le planning'], ['seeHours', 'Voir les heures SAP, budgets et alertes', 'Onglet Heures, pastilles « ! », heures dans les infobulles'], ['rhiOwn', 'Saisir son propre RHI'], ['rhiCC', 'Viser les RHI comme chef de chantier', 'Uniquement les intérimaires dont il est le chef de chantier'], ['rhiCP', 'Viser les RHI comme chef de projet', 'Et corriger le planning selon le RHI'], ['ref', 'Gérer tâches, chantiers et équipes'], ['sap', 'Importer l’export SAP'], ['charge', 'Planning long terme et courbe de charge'], ['totals', 'Totaux par fonction en bas du planning'], ['admin', 'Gérer les droits d’accès']];
+const PERMS = [['viewAll', 'Voir le planning de toutes les équipes', 'Sinon : uniquement sa propre ligne'], ['editPlan', 'Modifier le planning'], ['seeHours', 'Voir les heures SAP, budgets et alertes', 'Onglet Heures, pastilles « ! », heures dans les infobulles'], ['rhiOwn', 'Saisir son propre RHI'], ['rhiCC', 'Viser les RHI comme chef de chantier', 'Uniquement les intérimaires dont il est le chef de chantier'], ['rhiCP', 'Viser les RHI comme chef de projet', 'Et corriger le planning selon le RHI'], ['ref', 'Gérer tâches, chantiers et équipes'], ['sap', 'Importer l’export SAP'], ['charge', 'Planning long terme et courbe de charge'], ['totals', 'Totaux par fonction en bas du planning'], ['absDetail', 'Voir le motif des absences', 'Maladie, accident, vacances… Sinon : « Absence » (chacun voit toujours son propre motif)'], ['admin', 'Gérer les droits d’accès']];
 const DEF_PERMS = {
   monteur: { viewAll: 1 }, apprenti: { viewAll: 1 }, interim: { rhiOwn: 1 }, chefchantier: { viewAll: 1, editPlan: 1, rhiCC: 1 },
   planif: { viewAll: 1, editPlan: 1, ref: 1 },
-  cp: { viewAll: 1, editPlan: 1, seeHours: 1, rhiCC: 1, rhiCP: 1, ref: 1, sap: 1, charge: 1, totals: 1 },
+  cp: { viewAll: 1, editPlan: 1, seeHours: 1, rhiCC: 1, rhiCP: 1, ref: 1, sap: 1, charge: 1, totals: 1, absDetail: 1 },
   admin: Object.fromEntries(PERMS.map(([k]) => [k, 1])),
 };
-if (S.permsV !== 3) { S.perms = JSON.parse(JSON.stringify(DEF_PERMS)); S.permsV = 3; }
+if (S.permsV !== 4) { S.perms = JSON.parse(JSON.stringify(DEF_PERMS)); S.permsV = 4; }
 S.lt ??= demoLt(S);
 /* Fixed staff sign in with their VINCI Energies Microsoft 365 account; temporary workers get a personal access. */
 const m365 = r => r.email || (norm(r.name).replace(/[^a-z ]/g, '').split(' ').filter(Boolean).join('.') + '@vinci-energies.net');
@@ -830,6 +830,11 @@ function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e
 const UI = { tab: 'planning', sel: null, clip: null, range: false, half: false, undo: [], drag: null, suppressUntil: 0, modal: null, imp: null, pickQ: '' };
 try { const t = localStorage.getItem(KEY + '-tab'); if (t) UI.tab = t; } catch (e) {}
 
+/* Absence reasons (illness, accident…) are personal and partly health data: shown as « Absence » to users without the right, except on their own row.
+   In the real app the server sends only « Absence » to those users. */
+const ABS_IDS = ['std0', 'std1', 'std3', 'std4', 'std7', 'std8'];
+const ABS_TASK = { id: 'abs', label: 'Absence', color: YELLOW, kind: 'std' };
+const viewTask = (t, r) => t && t.kind === 'std' && ABS_IDS.includes(t.id) && !can('absDetail') && r?.id !== S.as.resId ? ABS_TASK : t;
 function getTask(id) {
   if (!id) return null;
   if (id.startsWith('P:')) { const p = S.projets[id]; return p ? { id, label: p.label, color: p.color, kind: 'projet', projet: id } : null; }
@@ -892,7 +897,7 @@ function computeRows() {
   const order = []; S.resources.forEach(r => { if (!order.includes(r.team)) order.push(r.team); });
   if (!can('viewAll')) { ROWS = S.resources.filter(r => r.id === S.as.resId); return; }
   let rs = S.resources.filter(r => (!team || r.team === team) && (S.view.off || isOn(r)));
-  if (q) rs = rs.filter(r => norm(r.name + ' ' + r.team).includes(q) || DAYS.some(d => [0, 1].some(h => { const t = getTask(S.slots[`${r.id}|${d}|${h}`]); return t && norm(t.label + ' ' + (t.lot || '') + ' ' + (t.code || '')).includes(q); })));
+  if (q) rs = rs.filter(r => norm(r.name + ' ' + r.team).includes(q) || DAYS.some(d => [0, 1].some(h => { const t = viewTask(getTask(S.slots[`${r.id}|${d}|${h}`]), r); return t && norm(t.label + ' ' + (t.lot || '') + ' ' + (t.code || '')).includes(q); })));
   ROWS = rs.sort((a, b) => order.indexOf(a.team) - order.indexOf(b.team));
 }
 function renderTool() {
@@ -928,7 +933,7 @@ function renderGrid() {
     for (let s = 0; s < n;) {
       const id = S.slots[skey(r, s)]; if (!id) { s++; continue; }
       let e = s + 1; while (e < n && S.slots[skey(r, e)] === id) e++;
-      const t = getTask(id) || { label: '(supprimée)', color: '#777777' };
+      const t = viewTask(getTask(id), r) || { label: '(supprimée)', color: '#777777' };
       let warn = '', tip = t.label;
       if (t.projet) {
         const x = can('seeHours') ? STATUS.proj[t.projet]?.secs[r.section] : null;
@@ -1442,7 +1447,7 @@ function compareRhi(w) {
   const days = [];
   for (let i = 0; i < 7; i++) {
     const date = addDays(w.monday, i); const full = (r.profile || DEF_PROFILE)[pd(date).getDay()] || 0;
-    const halves = [0, 1].map(h => getTask(S.slots[`${r.id}|${date}|${h}`]));
+    const halves = [0, 1].map(h => viewTask(getTask(S.slots[`${r.id}|${date}|${h}`]), r));
     const planned = {}; halves.forEach(t => { if (t?.projet) planned[t.projet] = (planned[t.projet] || 0) + full / 2; });
     const other = [...new Set(halves.filter(t => t && !t.projet).map(t => t.label))];
     const got = {}; w.lines.forEach(l => { const h = +l.h[i] || 0; if (h) { const pid = projOfCode(l.otp); got[pid] = (got[pid] || 0) + h; } });
@@ -1793,8 +1798,8 @@ function renderSap() {
       <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn pri" data-a="iapply">Appliquer l’import</button><button class="btn" data-a="icancel">Annuler</button></div></div>`;
   }
   $('#p-sap').innerHTML = `<div class="wrap" style="display:grid;gap:14px">
-    <div class="ph"><div><p class="eyebrow">Données SAP</p><h2>Import SAP</h2><p>Déposez l’export « Heures restant à engager ». Les colonnes sont reconnues par leur nom (Affaire, Désignation affaire, Responsable d’affaire, Code Section, Heures), la mise en forme peut donc changer.</p></div></div>
-    <label class="drop" id="drop" for="file"><b>Déposer le fichier Excel ou CSV</b><span>ou toucher ici pour le choisir</span><input type="file" id="file" accept=".xlsx,.xls,.csv" hidden></label>
+    <div class="ph"><div><p class="eyebrow">Données SAP</p><h2>Import SAP</h2><p>Déposez l’export « Heures restant à engager ». Excel, CSV ou HTML (« Edition d’états » SAP). Les colonnes sont reconnues par leur nom (Affaire, Désignation affaire, RA ou Responsable d’affaire, Cd section ou Code Section, Heures), la mise en forme peut donc changer ; les lignes de sous-totaux (*) sont ignorées.</p></div></div>
+    <label class="drop" id="drop" for="file"><b>Déposer le fichier Excel, CSV ou HTML (SAP)</b><span>ou toucher ici pour le choisir</span><input type="file" id="file" accept=".xlsx,.xls,.csv,.htm,.html" hidden></label>
     ${prev}
     <div class="card"><h3>Historique</h3>${S.imports.length ? `<div class="tbl-wrap"><table><thead><tr><th>Date</th><th>Fichier</th><th>Période</th><th class="n">Affaires</th><th class="n">Nouvelles</th><th class="n">Archivées</th></tr></thead><tbody>${S.imports.map(i => `<tr><td>${new Date(i.at).toLocaleString('fr-CH', { dateStyle: 'short', timeStyle: 'short' })}</td><td>${esc(i.file)}</td><td>${esc(i.period || '')}</td><td class="n">${i.n}</td><td class="n">${i.nouv}</td><td class="n">${i.disp}</td></tr>`).join('')}</tbody></table></div>` : '<p class="hint" style="padding:0">Aucun import pour l’instant. Les chantiers affichés sont des exemples.</p>'}</div>
     <div class="card dark"><h3>Prochaine étape : import automatique</h3><ol class="steps"><li><b>SAP</b> génère chaque nuit le même rapport en CSV brut, sans mise en forme.</li><li>Le fichier est déposé dans un dossier <b>SharePoint</b> ou un <b>SFTP</b>.</li><li>Une tâche planifiée <b>Azure</b> l’importe avec les mêmes règles que ci-dessus et envoie les alertes de dépassement.</li></ol></div></div>`;
@@ -1815,34 +1820,61 @@ async function readBook(f) {
   }
   return XLSX.read(await f.arrayBuffer(), { type: 'array' });
 }
+/* SAP list output saved as HTML ("Edition d'états"): one table per printed page, header repeated, subtotal rows marked with *. */
+async function readHtmlRows(f) {
+  const doc = new DOMParser().parseFromString(await f.text(), 'text/html');
+  return [...doc.querySelectorAll('tr')].map(tr => [...tr.cells].map(td => td.textContent.replace(/\u00a0/g, ' ').trim()));
+}
+/* SAP numbers: 1,235.000 / 1'235.00 / 1.235,00 / 4.750- (trailing minus). */
+function sapNum(v) {
+  if (typeof v === 'number') return v;
+  let t = String(v ?? '').trim().replace(/['’\s]/g, ''); if (!t) return 0;
+  const neg = /-$/.test(t) || /^-/.test(t); t = t.replace(/^-|-$/g, '');
+  const c = t.lastIndexOf(','), d = t.lastIndexOf('.');
+  if (c >= 0 && d >= 0) t = c > d ? t.replace(/\./g, '').replace(',', '.') : t.replace(/,/g, '');
+  else if (c >= 0) t = /^\d{1,3}(,\d{3})+$/.test(t) ? t.replace(/,/g, '') : t.replace(',', '.');
+  const n = parseFloat(t); return isNaN(n) ? 0 : neg ? -n : n;
+}
 async function handleFile(f) {
+  if (/\.html?$/i.test(f.name)) {
+    let rows; try { rows = await readHtmlRows(f); } catch (e) { rows = []; }
+    if (parseSapRows(f, 'HTML', rows)) return renderSap();
+    UI.imp = { err: 'Le fichier HTML ne contient pas de tableau avec les colonnes « Affaire » et « Heures ». Vérifiez qu’il s’agit bien de l’export SAP des heures restantes.' }; return renderSap();
+  }
   if (typeof XLSX === 'undefined') { UI.imp = { err: 'Le lecteur Excel n’a pas pu être chargé. Vérifiez la connexion et rechargez la page.' }; return renderSap(); }
   let wb;
   try { wb = await readBook(f); } catch (e) { UI.imp = { err: `Le fichier « ${f.name} » n’est pas un Excel ou CSV lisible.` }; return renderSap(); }
   for (const name of wb.SheetNames) {
-    const rows = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: null, blankrows: false });
+    if (parseSapRows(f, name, XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: null, blankrows: false }))) return renderSap();
+  }
+  UI.imp = { err: 'Aucune feuille ne contient les colonnes « Affaire » et « Heures ». Vérifiez qu’il s’agit bien de l’export « Heures restant à engager ».' };
+  renderSap();
+}
+/* Rows of one sheet or HTML page → UI.imp. Returns false when the SAP columns are not found. */
+function parseSapRows(f, name, rows) {
+  {
     const hi = rows.findIndex(r => r && r.some(c => norm(c) === 'affaire') && r.some(c => norm(c) === 'heures'));
-    if (hi < 0) continue;
+    if (hi < 0) return false;
     const H = rows[hi].map(norm); const col = fn => H.findIndex(fn);
-    const C = { aff: col(h => h === 'affaire'), lab: col(h => h === 'designation affaire'), ra: col(h => h.startsWith('responsable')), reg: col(h => h === 'regroupement'), sc: col(h => h === 'code section'), sl: col(h => h === 'designation section'), hrs: col(h => h === 'heures'), mnt: col(h => h === 'montants'), entc: col(h => h === 'code entreprise'), ent: col(h => h === 'entreprise') };
-    const period = rows.slice(0, hi).flat().find(c => /^date\s*:/i.test(String(c ?? '')));
+    const C = { aff: col(h => h === 'affaire'), lab: col(h => h === 'designation affaire'), ra: col(h => h.startsWith('responsable') || h === 'ra'), reg: col(h => h === 'regroupement'), sc: col(h => h === 'code section' || h === 'cd section'), sl: col(h => h === 'designation section' || h === 'section'), hrs: col(h => h === 'heures'), mnt: col(h => h === 'montants'), entc: col(h => h === 'code entreprise'), ent: col(h => h === 'entreprise'), ex: col(h => h === 'ex.' || h === 'exercice'), per: col(h => h === 'periode') };
+    let period = rows.slice(0, hi).flat().find(c => /^date\s*:/i.test(String(c ?? '')));
     const data = [], ents = new Map();
     for (const r of rows.slice(hi + 1)) {
-      const code = String(r[C.aff] ?? '').trim(); if (!code) continue;
+      if (!r || /^\*/.test(String(r[0] ?? '').trim())) continue; // subtotal lines
+      const code = String(r[C.aff] ?? '').trim(); if (!code || norm(code) === 'affaire') continue;
+      if (!period && C.per >= 0 && /^\d+$/.test(String(r[C.per] ?? '').trim())) period = `Période ${String(r[C.per]).trim()}/${C.ex >= 0 ? String(r[C.ex]).trim() : ''}`;
       let n = parseInt(r[C.sc], 10);
       if (isNaN(n)) { const m = String(r[C.sl] ?? '').match(/(\d{1,2})/); n = m ? +m[1] : NaN; }
       if (isNaN(n)) continue;
       const ent = C.entc >= 0 ? String(r[C.entc] ?? '') : '';
       if (ent) ents.set(ent, C.ent >= 0 ? String(r[C.ent] ?? ent) : ent);
-      data.push({ code, label: String(r[C.lab] ?? code).trim(), ra: C.ra >= 0 ? String(r[C.ra] ?? '').trim() : '', reg: C.reg >= 0 ? String(r[C.reg] ?? '').trim() : '', ent, sec: 'S' + pad(n), h: Number(r[C.hrs]) || 0, m: C.mnt >= 0 ? Number(r[C.mnt]) || 0 : 0 });
+      data.push({ code, label: String(r[C.lab] ?? code).trim(), ra: C.ra >= 0 ? String(r[C.ra] ?? '').trim() : '', reg: C.reg >= 0 ? String(r[C.reg] ?? '').trim() : '', ent, sec: 'S' + pad(n), h: sapNum(r[C.hrs]), m: C.mnt >= 0 ? sapNum(r[C.mnt]) : 0 });
     }
-    if (!data.length) continue;
+    if (!data.length) return false;
     const entList = [...ents.entries()];
     UI.imp = { file: f.name, sheet: name, period: period ? String(period) : '', data, ents: entList, ent: ents.has('15364') ? '15364' : '' };
-    return renderSap();
+    return true;
   }
-  UI.imp = { err: 'Aucune feuille ne contient les colonnes « Affaire » et « Heures ». Vérifiez qu’il s’agit bien de l’export « Heures restant à engager ».' };
-  renderSap();
 }
 /* CHF per hour by section, from the Montants / Heures columns (positive lines only). */
 function sapRates(I) {
