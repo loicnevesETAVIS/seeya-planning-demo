@@ -2668,6 +2668,12 @@ function render() {
 /* ---------- map: people planned per chantier and day; the bubble grows with the headcount ---------- */
 const keepAdr = () => { const a = $('#t-adr'); if (a && UI.modal?.t) UI.modal.t.loc = { ...(UI.modal.t.loc || {}), adr: a.value.trim() }; };
 let LMAP = null;
+/* Base maps: OpenStreetMap, swisstopo aerial imagery (SWISSIMAGE) and swisstopo national map; free, no key, attribution required. */
+const MAP_BASES = {
+  plan: ['Plan', 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', '© OpenStreetMap', 19],
+  sat: ['Satellite', 'https://wmts.geo.admin.ch/1.0.0/ch.swisstopo.swissimage/default/current/3857/{z}/{x}/{y}.jpeg', '© swisstopo (SWISSIMAGE)', 20],
+  cn: ['Carte nationale', 'https://wmts.geo.admin.ch/1.0.0/ch.swisstopo.pixelkarte-farbe/default/current/3857/{z}/{x}/{y}.jpeg', '© swisstopo', 18],
+};
 function mapData(day) {
   const per = {};
   for (const r of S.resources) {
@@ -2689,6 +2695,7 @@ function renderCarte() {
   $('#p-carte').innerHTML = `<div class="wrap" style="display:grid;gap:14px">
     <div class="ph"><div><p class="eyebrow">Carte</p><h2>Où sont les équipes</h2><p>Personnes planifiées sur chaque chantier, jour par jour. Plus il y a de monde, plus le point est grand ; touchez un point pour voir qui y travaille. Les absences n’apparaissent pas.</p></div></div>
     <div class="filters" style="align-items:center"><button class="btn" data-a="mapday" data-v="-1" aria-label="Jour précédent">◀</button><input class="inp" type="date" id="map-day" data-f="mapday" value="${day}" aria-label="Jour" style="width:auto"><button class="btn" data-a="mapday" data-v="1" aria-label="Jour suivant">▶</button><button class="btn" data-a="mapday" data-v="0">Aujourd’hui</button>
+      <span class="grp" role="group" aria-label="Fond de carte" style="display:inline-flex;gap:4px">${Object.entries(MAP_BASES).map(([k, b]) => `<button class="btn" data-a="mapbase" data-v="${k}" aria-pressed="${(S.view.mapBase || 'plan') === k}">${b[0]}</button>`).join('')}</span>
       <span class="hint" style="padding:0">${dLabel(day)} · <b>${shown}</b> personne${shown > 1 ? 's' : ''} sur ${placed.length} chantier${placed.length > 1 ? 's' : ''}${tot > shown ? ` · ${tot - shown} sur des chantiers sans emplacement` : ''}</span></div>
     ${P ? `<div class="map-place"><span>Touchez la carte à l’emplacement de <b>${esc(P.label)}</b>.</span><button class="btn" data-a="mapcancel">Annuler</button></div>` : ''}
     <div class="map-box"><div id="lmap" role="application" aria-label="Carte des chantiers"></div><div class="map-note" id="map-note" hidden>Fond de carte indisponible ici (réseau). Les points restent placés correctement.</div></div>
@@ -2704,7 +2711,8 @@ function drawMap(list) {
   if (typeof L === 'undefined') { el.innerHTML = '<p class="hint" style="padding:16px">La carte n’a pas pu être chargée. Vérifiez la connexion et rechargez la page.</p>'; return; }
   LMAP = L.map(el, { scrollWheelZoom: true, keyboard: false }).setView(S.view.mapC || [46.56, 6.65], S.view.mapZ || 10);
   let errs = 0;
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, attribution: '© OpenStreetMap' }).on('tileerror', () => { if (++errs === 3) $('#map-note')?.removeAttribute('hidden'); }).addTo(LMAP);
+  const B = MAP_BASES[S.view.mapBase] || MAP_BASES.plan;
+  L.tileLayer(B[1], { maxNativeZoom: B[3], maxZoom: 19, attribution: B[2] }).on('tileerror', () => { if (++errs === 3) $('#map-note')?.removeAttribute('hidden'); }).addTo(LMAP);
   LMAP.on('moveend', () => { const c = LMAP.getCenter(); S.view.mapC = [+c.lat.toFixed(5), +c.lng.toFixed(5)]; S.view.mapZ = LMAP.getZoom(); save(); });
   LMAP.on('click', e => {
     const p = UI.mapPlace && S.projets[UI.mapPlace]; if (!p) return;
@@ -3014,6 +3022,7 @@ const ACT = {
     catch (e) { const a = document.createElement('textarea'); a.value = t; a.style.position = 'fixed'; a.style.opacity = '0'; document.body.append(a); a.select(); const ok = document.execCommand('copy'); a.remove(); if (!ok) { toast('Copie impossible dans ce navigateur.', 'bad'); return; } }
     toast('Synthèse copiée : collez-la dans un mail ou Teams.');
   },
+  mapbase: el => { S.view.mapBase = el.dataset.v; save(); renderCarte(); },
   mapcancel: () => { UI.mapPlace = null; renderCarte(); },
   mapday: el => { const v = +el.dataset.v; UI.mapDay = v ? addDays(UI.mapDay || TODAY, v) : TODAY; renderCarte(); },
   tsave: () => {
