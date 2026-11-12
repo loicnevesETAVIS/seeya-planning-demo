@@ -250,6 +250,7 @@ main { flex: 1; min-height: 0; position: relative; }
 .syn-p ul { margin: 0; padding-left: 18px; display: grid; gap: 3px; font-size: 14px; }
 .syn-p s { color: var(--mut); }
 .syn-d { white-space: nowrap; }
+.syn-ev.in b { color: var(--ok); } .syn-ev.out b { color: var(--bad); }
 .map-box { position: relative; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: var(--panel2); }
 #lmap { height: min(68vh, 640px); min-height: 340px; width: 100%; background: var(--panel2); }
 .map-note { position: absolute; left: 10px; right: 10px; bottom: 10px; z-index: 500; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; font-size: 13px; color: var(--mut); }
@@ -1463,6 +1464,12 @@ function demoHist(st) {
   st.hist.sort((a, b) => a.t - b.t);
 }
 demoHist(S);
+if (S.demo && !S.resHistInit) {
+  S.resHistInit = true; const H = S.hist ??= []; const iv = S.resources.find(r => r.id === 'r12');
+  if (iv) H.push({ t: Date.now() - 4 * 864e5 - 3 * 36e5, by: S.resources[0]?.name || 'Chef de chantier', ev: 'add', rid: iv.id, name: iv.name, team: iv.team, sec: 'intérimaire' });
+  H.push({ t: Date.now() - 9 * 864e5, by: 'A. DUPRAZ', ev: 'del', rid: 'r-old1', name: 'Marco ROSSI', team: 'Chantiers Est', sec: 'intérimaire' });
+  H.sort((a, b) => a.t - b.t);
+}
 /* Outgoing mails and SMS at each step of the RHI and account workflows.
    In the real app an Azure Function sends them (Microsoft Graph for mail, a Swiss SMS provider); here they go to a journal. */
 const raMail = name => norm(name).replace(/[^a-z. ]/g, '').replace(/\.?\s+/g, '.') + '@vinci-energies.net';
@@ -1505,7 +1512,7 @@ const isOn = r => r.actif !== false;
 const futureSlots = r => Object.keys(S.slots).filter(k => k.startsWith(r.id + '|') && k.split('|')[1] > TODAY).length;
 function setMission(r, on, acc) {
   const a = acc || (r?.kind === 'interim' ? S.accounts.find(x => x.resId === r.id) : null);
-  if (r) { r.actif = on; (r.mission ??= []).push({ at: TODAY, on, by: myName() }); }
+  if (r) { r.actif = on; (r.mission ??= []).push({ at: TODAY, on, by: myName() }); logRes(on ? 'on' : 'off', r); }
   if (a && ['active', 'disabled'].includes(a.status)) { a.status = on ? 'active' : 'disabled'; ACC_MSG[on ? 'on' : 'off'](S, a); }
 }
 /* SHA-256 in plain JS, used when crypto.subtle is unavailable (page not served over HTTPS). */
@@ -1736,6 +1743,8 @@ function logChanges(prev, ch) {
   const lim = t - 120 * 864e5; if (H.length && H[0].t < lim) S.hist = H.filter(h => h.t >= lim);
   if (S.hist.length > 40000) S.hist = S.hist.slice(-40000);
 }
+/* People added to / removed from the planning, and on / off mission, in the same journal. */
+function logRes(ev, r, at) { (S.hist ??= []).push({ t: at || Date.now(), by: myName() || roleLabel(S.as.role), ev, rid: r.id, name: r.name, team: r.team, sec: r.kind === 'interim' ? 'intérimaire' : r.section }); }
 /* edits with undo */
 function apply(ch, record = true) {
   const prev = {};
@@ -2721,7 +2730,7 @@ const nextWd = d => { let x = addDays(d, 1); while (isWe(x)) x = addDays(x, 1); 
 const prevWd = d => { let x = addDays(d, -1); while (isWe(x)) x = addDays(x, -1); return x; };
 function changeSummary(days) {
   const since = Date.now() - days * 864e5, net = {};
-  for (const h of S.hist || []) { if (h.t < since) continue; const x = net[h.k] ??= { o: h.o, by: new Set(), t: 0 }; x.n = h.n; x.by.add(h.by); x.t = Math.max(x.t, h.t); }
+  for (const h of S.hist || []) { if (h.t < since || !h.k) continue; const x = net[h.k] ??= { o: h.o, by: new Set(), t: 0 }; x.n = h.n; x.by.add(h.by); x.t = Math.max(x.t, h.t); }
   const per = {};
   for (const [k, x] of Object.entries(net)) {
     const [rid, d, hh] = k.split('|'); const r = S.resources.find(y => y.id === rid); if (!r) continue;
@@ -2742,34 +2751,42 @@ function changeSummary(days) {
     // today's sequence of chantiers around the changed days (one working day before and after)
     const a = prevWd(items[0].d), z = nextWd(items.at(-1).d), seq = [];
     if ((pd(z) - pd(a)) / 864e5 <= 60) for (let d = a; d <= z; d = nextWd(d)) {
-      const ls = [0, 1].map(h => { const t = viewTask(getTask(S.slots[`${r.id}|${d}|${h}`]), r); return t ? t.label : '—'; });
+      const ls = [0, 1].map(h => { const t = viewTask(getTask(S.slots[`${r.id}|${d}|${h}`]), r); return t ? t.label : 'Non planifié'; });
       const l = ls[0] === ls[1] ? ls[0] : `${ls[0]} / ${ls[1]}`; const L = seq.at(-1);
       if (L && L.l === l) L.z = d; else seq.push({ l, a: d, z: d });
     }
     return { r, ranges, seq };
   }).sort((x, y) => x.r.name.localeCompare(y.r.name));
 }
+const RES_EV = { add: ['+', 'Ajouté au planning'], del: ['−', 'Supprimé du planning'], off: ['−', 'Passé hors mission'], on: ['+', 'De nouveau en mission'] };
+function resEvents(days) {
+  const since = Date.now() - days * 864e5;
+  return (S.hist || []).filter(h => h.ev && h.t >= since).map(h => ({ ...h, name: S.resources.find(r => r.id === h.rid)?.name || h.name }));
+}
+const chgTxt = g => g.o === 'Non planifié' ? ['+ ajouté sur', g.n] : g.n === 'Non planifié' ? ['− retiré de', g.o] : null;
 const dShort = d => `${pd(d).getDate()}.${pad(pd(d).getMonth() + 1)}`;
 const rangeTxt = g => { const half = (p, end) => p.h === (end ? 0 : 1) ? (end ? ' matin' : ' après-midi') : '';
   return g.from.d === g.to.d ? `${dLabel(g.from.d)}${g.from.h === g.to.h ? (g.from.h ? ' après-midi' : ' matin') : ''}` : `du ${dLabel(g.from.d)}${half(g.from)} au ${dLabel(g.to.d)}${half(g.to, true)}`; };
 const seqTxt = q => q.map(x => `${x.l} (${x.a === x.z ? dShort(x.a) : dShort(x.a) + '–' + dShort(x.z)})`).join(' → ');
 function synthModal() {
-  const days = UI.modal.days || 7, list = changeSummary(days);
+  const days = UI.modal.days || 7, list = changeSummary(days), evs = resEvents(days);
   const when = t => { const d = new Date(t); return `${ds(d) === TODAY ? 'aujourd’hui' : dLabel(ds(d))} à ${pad(d.getHours())}h${pad(d.getMinutes())}`; };
   return `<div class="sheet" role="dialog" aria-modal="true" aria-label="Synthèse des changements"><div class="sheet-h"><h3>Synthèse des changements</h3><button class="iconbtn" data-a="mclose" aria-label="Fermer">✕</button></div>
     <div class="sheet-b">
       <label class="fld"><span>Changements faits pendant</span><select class="sel" id="syn-days" data-f="syndays">${SYN_DAYS.map(n => `<option value="${n}" ${n === days ? 'selected' : ''}>${n === 1 ? 'les dernières 24 heures' : `les ${n} derniers jours`}</option>`).join('')}</select></label>
+      ${evs.length ? `<div class="syn-p"><b>Arrivées et départs du planning (${evs.length})</b><ul>${evs.map(h => `<li class="syn-ev ${RES_EV[h.ev][0] === '+' ? 'in' : 'out'}"><b>${RES_EV[h.ev][0]} ${RES_EV[h.ev][1]}</b> : ${esc(h.name)} <small>(${esc(h.team || '')} · ${esc(h.sec || '')}) · par ${esc(h.by)}, ${when(h.t)}</small></li>`).join('')}</ul></div>` : ''}
       <p class="hint" style="padding:0">${list.length ? `${list.length} personne${list.length > 1 ? 's ont' : ' a'} changé d’affectation. Pour chacune : le parcours actuel autour des jours modifiés, puis le détail (avant → après), qui l’a fait et quand.` : 'Aucun changement d’affectation pendant cette période.'}</p>
       ${list.map(x => `<div class="syn-p"><div><b>${esc(x.r.name)}</b> <small>${esc(x.r.team)} · ${x.r.kind === 'interim' ? 'intérimaire' : esc(x.r.section)}</small></div>
         ${x.seq.length ? `<div class="syn-seq">${esc(seqTxt(x.seq))}</div>` : ''}
-        <ul>${x.ranges.map(g => `<li><span class="syn-d">${rangeTxt(g)}</span> : <s>${esc(g.o)}</s> → <b>${esc(g.n)}</b><small> · par ${esc([...g.by].join(', '))}, ${when(g.t)}</small></li>`).join('')}</ul></div>`).join('')}
-      <div style="display:flex;gap:8px;flex-wrap:wrap">${list.length ? '<button class="btn pri" data-a="syncopy">Copier le texte</button>' : ''}<button class="btn" data-a="mclose">Fermer</button></div>
+        <ul>${x.ranges.map(g => `<li><span class="syn-d">${rangeTxt(g)}</span> : ${chgTxt(g) ? `<b>${chgTxt(g)[0]}</b> ${esc(chgTxt(g)[1])}` : `<s>${esc(g.o)}</s> → <b>${esc(g.n)}</b>`}<small> · par ${esc([...g.by].join(', '))}, ${when(g.t)}</small></li>`).join('')}</ul></div>`).join('')}
+      <div style="display:flex;gap:8px;flex-wrap:wrap">${list.length || evs.length ? '<button class="btn pri" data-a="syncopy">Copier le texte</button>' : ''}<button class="btn" data-a="mclose">Fermer</button></div>
     </div></div>`;
 }
 function synthText(days) {
-  const list = changeSummary(days);
+  const list = changeSummary(days), evs = resEvents(days);
   return [`Synthèse des changements de planning, ${days === 1 ? 'dernières 24 heures' : days + ' derniers jours'} (au ${dShort(TODAY)})`, '',
-    ...list.map(x => [`${x.r.name} : ${seqTxt(x.seq)}`, ...x.ranges.map(g => `  - ${rangeTxt(g)} : ${g.o} → ${g.n} (par ${[...g.by].join(', ')})`), ''].join('\n'))].join('\n');
+    ...(evs.length ? ['Arrivées et départs du planning :', ...evs.map(h => `  ${RES_EV[h.ev][0]} ${RES_EV[h.ev][1]} : ${h.name} (${h.team || ''} · ${h.sec || ''}), par ${h.by} le ${dShort(ds(new Date(h.t)))}`), ''] : []),
+    ...list.map(x => [`${x.r.name} : ${seqTxt(x.seq)}`, ...x.ranges.map(g => `  - ${rangeTxt(g)} : ${chgTxt(g) ? chgTxt(g).join(' ') : g.o + ' → ' + g.n} (par ${[...g.by].join(', ')})`), ''].join('\n'))].join('\n');
 }
 function renderDroits() {
   $('#p-droits').innerHTML = `<div class="wrap" style="display:grid;gap:14px">
@@ -2938,7 +2955,7 @@ const ACT = {
   accok: el => {
     const a = S.accounts.find(x => x.id === el.dataset.id); const name = `${a.prenom} ${a.nom}`;
     let r = S.resources.find(x => x.kind === 'interim' && norm(x.name) === norm(name));
-    if (!r) { r = { id: 'r' + uid(), name, team: 'Intérimaires', section: 'S04', kind: 'interim', profile: { ...DEF_PROFILE } }; S.resources.push(r); }
+    if (!r) { r = { id: 'r' + uid(), name, team: 'Intérimaires', section: 'S04', kind: 'interim', profile: { ...DEF_PROFILE } }; S.resources.push(r); logRes('add', r); }
     Object.assign(r, { agence: a.agence, cc: a.cc, tel: a.phone, mail: a.email || r.mail || '' });
     r.actif = true; a.status = 'active'; a.resId = r.id; a.validatedBy = myName(); ACC_MSG.ok(S, a); save(); renderTabs(); renderRhi(); toast(`Compte de ${name} activé. SMS envoyé au ${a.phone}.`);
   },
@@ -3008,15 +3025,15 @@ const ACT = {
     save(); closeModal(); computeStatus(); render(); toast('Enregistré');
   },
   tarch: () => { const t = S.tasks.find(x => x.id === UI.modal.t.id); t.archived = !t.archived; save(); closeModal(); render(); },
-  radd: () => { const r = { id: 'r' + uid(), name: 'Nouvelle ressource', team: S.view.team || S.resources.at(-1)?.team || 'Équipe', section: 'S04', profile: { ...DEF_PROFILE } }; S.resources.push(r); save(); renderRes(); setTimeout(() => { const i = document.getElementById('rn-' + r.id); i?.focus(); i?.select(); }, 30); },
-  rdel: el => arm(el, () => { const id = el.dataset.id; S.resources = S.resources.filter(r => r.id !== id); for (const k of Object.keys(S.slots)) if (k.startsWith(id + '|')) delete S.slots[k]; UI.sel = null; save(); computeStatus(); renderRes(); toast('Ressource supprimée'); }),
+  radd: () => { const r = { id: 'r' + uid(), name: 'Nouvelle ressource', team: S.view.team || S.resources.at(-1)?.team || 'Équipe', section: 'S04', profile: { ...DEF_PROFILE } }; S.resources.push(r); logRes('add', r); save(); renderRes(); setTimeout(() => { const i = document.getElementById('rn-' + r.id); i?.focus(); i?.select(); }, 30); },
+  rdel: el => arm(el, () => { const id = el.dataset.id; const rr = S.resources.find(r => r.id === id); if (rr) logRes('del', rr); S.resources = S.resources.filter(r => r.id !== id); for (const k of Object.keys(S.slots)) if (k.startsWith(id + '|')) delete S.slots[k]; UI.sel = null; save(); computeStatus(); renderRes(); toast('Ressource supprimée'); }),
   rbulk: () => {
     const lines = $('#bulk').value.split(/\r?\n/).map(l => l.trim()).filter(Boolean); let n = 0, skip = 0;
     for (const l of lines) {
       const [name, team, sec] = l.split(/\t|;|,/).map(x => (x || '').trim()); if (!name) continue;
       if (S.resources.some(r => norm(r.name) === norm(name))) { skip++; continue; }
       const s = (sec || '').toUpperCase().replace(/^S?(\d+)$/, (m, d) => 'S' + pad(+d));
-      S.resources.push({ id: 'r' + uid(), name, team: team || 'Sans équipe', section: SECTIONS[s] ? s : 'S04', profile: { ...DEF_PROFILE } }); n++;
+      const nr = { id: 'r' + uid(), name, team: team || 'Sans équipe', section: SECTIONS[s] ? s : 'S04', profile: { ...DEF_PROFILE } }; S.resources.push(nr); logRes('add', nr); n++;
     }
     save(); renderRes(); toast(`${n} ressource${n > 1 ? 's' : ''} ajoutée${n > 1 ? 's' : ''}${skip ? `, ${skip} déjà présente${skip > 1 ? 's' : ''}` : ''}.`);
   },
@@ -3074,7 +3091,7 @@ const ACT = {
   intsave: () => {
     const name = $('#in-name').value.trim(); if (!name) { toast('Indiquez le prénom et le nom.', 'bad'); return; }
     let r = UI.modal.isNew ? null : S.resources.find(x => x.id === UI.modal.id);
-    if (!r) { r = { id: 'r' + uid(), name, team: 'Intérimaires', section: 'S04', kind: 'interim', profile: { ...DEF_PROFILE } }; S.resources.push(r); }
+    if (!r) { r = { id: 'r' + uid(), name, team: 'Intérimaires', section: 'S04', kind: 'interim', profile: { ...DEF_PROFILE } }; S.resources.push(r); logRes('add', r); }
     Object.assign(r, { name, agence: $('#in-ag').value, mail: $('#in-mail').value.trim(), tel: $('#in-tel').value.trim(), cc: $('#in-cc').value, cout: parseFloat($('#in-cout').value.replace(',', '.')) || 0, note: $('#in-note').value.trim() });
     save(); closeModal(); renderRhi(); toast('Fiche intérimaire enregistrée');
   },
